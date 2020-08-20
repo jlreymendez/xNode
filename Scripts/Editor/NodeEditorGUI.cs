@@ -112,6 +112,11 @@ namespace XNodeEditor {
         /// <summary> Show right-click context menu for hovered port </summary>
         void ShowPortContextMenu(XNode.NodePort hoveredPort) {
             GenericMenu contextMenu = new GenericMenu();
+            foreach (var port in hoveredPort.GetConnections()) {
+                var name = port.node.name;
+                var index = hoveredPort.GetConnectionIndex(port);
+                contextMenu.AddItem(new GUIContent($"Disconnect({name})"), false, () => hoveredPort.Disconnect(index));
+            }
             contextMenu.AddItem(new GUIContent("Clear Connections"), false, () => hoveredPort.ClearConnections());
             contextMenu.DropDown(new Rect(Event.current.mousePosition, Vector2.zero));
             if (NodeEditorPreferences.GetSettings().autoSave) AssetDatabase.SaveAssets();
@@ -142,6 +147,7 @@ namespace XNodeEditor {
             for (int i = 0; i < gridPoints.Count; ++i)
                 gridPoints[i] = GridToWindowPosition(gridPoints[i]);
 
+            Color originalHandlesColor = Handles.color;
             Handles.color = gradient.Evaluate(0f);
             int length = gridPoints.Count;
             switch (path) {
@@ -202,6 +208,7 @@ namespace XNodeEditor {
                         Vector2 prev_point = point_a;
                         // Approximately one segment per 5 pixels
                         int segments = (int) Vector2.Distance(point_a, point_b) / 5;
+                        segments = Math.Max(segments, 1);
 
                         int draw = 0;
                         for (int j = 0; j <= segments; j++) {
@@ -267,7 +274,44 @@ namespace XNodeEditor {
                         }
                     }
                     break;
+                case NoodlePath.ShaderLab:
+                    Vector2 start = gridPoints[0];
+                    Vector2 end = gridPoints[length - 1];
+                    //Modify first and last point in array so we can loop trough them nicely.
+                    gridPoints[0] = gridPoints[0] + Vector2.right * (20 / zoom);
+                    gridPoints[length - 1] = gridPoints[length - 1] + Vector2.left * (20 / zoom);
+                    //Draw first vertical lines going out from nodes
+                    Handles.color = gradient.Evaluate(0f);
+                    DrawAAPolyLineNonAlloc(thickness, start, gridPoints[0]);
+                    Handles.color = gradient.Evaluate(1f);
+                    DrawAAPolyLineNonAlloc(thickness, end, gridPoints[length - 1]);
+                    for (int i = 0; i < length - 1; i++) {
+                        Vector2 point_a = gridPoints[i];
+                        Vector2 point_b = gridPoints[i + 1];
+                        // Draws the line with the coloring.
+                        Vector2 prev_point = point_a;
+                        // Approximately one segment per 5 pixels
+                        int segments = (int) Vector2.Distance(point_a, point_b) / 5;
+                        segments = Math.Max(segments, 1);
+
+                        int draw = 0;
+                        for (int j = 0; j <= segments; j++) {
+                            draw++;
+                            float t = j / (float) segments;
+                            Vector2 lerp = Vector2.Lerp(point_a, point_b, t);
+                            if (draw > 0) {
+                                if (i == length - 2) Handles.color = gradient.Evaluate(t);
+                                DrawAAPolyLineNonAlloc(thickness, prev_point, lerp);
+                            }
+                            prev_point = lerp;
+                            if (stroke == NoodleStroke.Dashed && draw >= 2) draw = -2;
+                        }
+                    }
+                    gridPoints[0] = start;
+                    gridPoints[length - 1] = end;
+                    break;
             }
+            Handles.color = originalHandlesColor;
         }
 
         /// <summary> Draws all connections </summary>
@@ -492,8 +536,8 @@ namespace XNodeEditor {
             if (e.type != EventType.Layout && currentActivity == NodeActivity.DragGrid) Selection.objects = preSelection.ToArray();
             EndZoomed(position, zoom, topPadding);
 
-            //If a change in is detected in the selected node, call OnValidate method. 
-            //This is done through reflection because OnValidate is only relevant in editor, 
+            //If a change in is detected in the selected node, call OnValidate method.
+            //This is done through reflection because OnValidate is only relevant in editor,
             //and thus, the code should not be included in build.
             if (onValidate != null && EditorGUI.EndChangeCheck()) onValidate.Invoke(Selection.activeObject, null);
         }
@@ -512,16 +556,22 @@ namespace XNodeEditor {
         }
 
         private void DrawTooltip() {
-            if (hoveredPort != null && NodeEditorPreferences.GetSettings().portTooltips && graphEditor != null) {
-                string tooltip = graphEditor.GetPortTooltip(hoveredPort);
-                if (string.IsNullOrEmpty(tooltip)) return;
-                GUIContent content = new GUIContent(tooltip);
-                Vector2 size = NodeEditorResources.styles.tooltip.CalcSize(content);
-                size.x += 8;
-                Rect rect = new Rect(Event.current.mousePosition - (size), size);
-                EditorGUI.LabelField(rect, content, NodeEditorResources.styles.tooltip);
-                Repaint();
+            if (!NodeEditorPreferences.GetSettings().portTooltips || graphEditor is null)
+                return;
+            string tooltip = null;
+            if (hoveredPort != null) {
+                tooltip = graphEditor.GetPortTooltip(hoveredPort);
             }
+            else if (hoveredNode != null && IsHoveringNode && IsHoveringTitle(hoveredNode)) {
+                tooltip = NodeEditor.GetEditor(hoveredNode, this).GetHeaderTooltip();
+            }
+            if (string.IsNullOrEmpty(tooltip)) return;
+            GUIContent content = new GUIContent(tooltip);
+            Vector2 size = NodeEditorResources.styles.tooltip.CalcSize(content);
+            size.x += 8;
+            Rect rect = new Rect(Event.current.mousePosition - (size), size);
+            EditorGUI.LabelField(rect, content, NodeEditorResources.styles.tooltip);
+            Repaint();
         }
     }
 }

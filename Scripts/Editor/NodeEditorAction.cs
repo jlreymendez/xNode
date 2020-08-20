@@ -25,13 +25,14 @@ namespace XNodeEditor {
         [NonSerialized] private XNode.NodePort autoConnectOutput = null;
         [NonSerialized] private List<Vector2> draggedOutputReroutes = new List<Vector2>();
         private RerouteReference hoveredReroute = new RerouteReference();
-        private List<RerouteReference> selectedReroutes = new List<RerouteReference>();
+        public List<RerouteReference> selectedReroutes = new List<RerouteReference>();
         private Vector2 dragBoxStart;
         private UnityEngine.Object[] preBoxSelection;
         private RerouteReference[] preBoxSelectionReroute;
         private Rect selectionBox;
         private bool isDoubleClick = false;
         private Vector2 lastMousePosition;
+        private float dragThreshold = 1f;
 
         public void Controls() {
             wantsMouseMove = true;
@@ -134,8 +135,11 @@ namespace XNodeEditor {
                             Repaint();
                         }
                     } else if (e.button == 1 || e.button == 2) {
-                        panOffset += e.delta * zoom;
-                        isPanning = true;
+                        //check drag threshold for larger screens
+                        if (e.delta.magnitude > dragThreshold) {
+                            panOffset += e.delta * zoom;
+                            isPanning = true;
+                        }
                     }
                     break;
                 case EventType.MouseDown:
@@ -439,6 +443,15 @@ namespace XNodeEditor {
             for (int i = 0; i < nodes.Length; i++) {
                 XNode.Node srcNode = nodes[i];
                 if (srcNode == null) continue;
+
+                // Check if user is allowed to add more of given node type
+                XNode.Node.DisallowMultipleNodesAttribute disallowAttrib;
+                Type nodeType = srcNode.GetType();
+                if (NodeEditorUtilities.GetAttrib(nodeType, out disallowAttrib)) {
+                    int typeCount = graph.nodes.Count(x => x.GetType() == nodeType);
+                    if (typeCount >= disallowAttrib.max) continue;
+                }
+
                 XNode.Node newNode = graphEditor.CopyNode(srcNode);
                 substitutes.Add(srcNode, newNode);
                 newNode.position = srcNode.position + offset;
@@ -526,8 +539,8 @@ namespace XNodeEditor {
             XNode.NodePort inputPort = node.Ports.FirstOrDefault(x => x.IsInput && x.ValueType == autoConnectOutput.ValueType);
             // Fallback to input port
             if (inputPort == null) inputPort = node.Ports.FirstOrDefault(x => x.IsInput);
-            // Autoconnect
-            if (inputPort != null) autoConnectOutput.Connect(inputPort);
+            // Autoconnect if connection is compatible
+            if (inputPort != null && inputPort.CanConnectTo(autoConnectOutput)) autoConnectOutput.Connect(inputPort);
 
             // Save changes
             EditorUtility.SetDirty(graph);
